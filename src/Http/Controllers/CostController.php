@@ -1,6 +1,6 @@
 <?php
 
-namespace Footility\FooCost\Http\Controllers;
+namespace Footility\Foocost\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;

@@ -1,6 +1,6 @@
 <?php
 
-namespace Footility\FooCost\Http;
+namespace Footility\Foocost\Http;
 
 use Illuminate\Support\ServiceProvider;
 
