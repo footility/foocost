@@ -33,7 +33,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Footility\\Foocost\\FooCostServiceProvider"
+                "Footility\\Foocost\\Http\\FooCostServiceProvider"
             ]
         }
     }
