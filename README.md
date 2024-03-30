@@ -27,7 +27,7 @@ To install FooCost into an existing Laravel project, follow these steps:
    After installing the package, you can publish the configuration file to customize the default settings such as hourly rate and minutes per field:
 
     ```bash
-    php artisan vendor:publish --provider="Footility\FooCost\FooCostServiceProvider"
+    php artisan vendor:publish --provider="Footility\\Foocost\\Http\\FooCostServiceProvider"
     ```
 
    This command will copy the configuration file to `config/foocost.php` in your project, where you can modify it as needed.
