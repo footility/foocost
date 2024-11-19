@@ -1,145 +1,118 @@
 <?php
-
 namespace Footility\Foocost\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
-
+use PhpParser\ParserFactory;
+use Symfony\Component\DomCrawler\Crawler;
 
 class GenerateAppStructure extends Command
 {
-  protected $signature = 'foo:generate-structure';
-  protected $description = 'Genera una struttura JSON dell\'applicazione basata sui modelli.';
+    protected $signature = 'foo:generate-structure';
+    protected $description = 'Genera una struttura JSON dell\'applicazione basata sui modelli.';
 
-  public function handle()
-  {
+    public function handle()
+    {
+        $appStructure = [];
+        $entities = $this->getEntityDescription('models', app_path('Models'));
+        $viewMappings = config('foocost.view_mappings');
 
-    $appStructure = array();
+        foreach ($entities as $entity => $path) {
+            $modelClassName = "App\\Models\\$entity";
+            $modelInstance = app($modelClassName);
 
-    $entities = $this->getEntityDescription('models', app_path('Models'));
-    $viewMappings = config('foocost.view_mappings');
+            $columnsCount = count($modelInstance->getFillable());
+            $appStructure[$entity]['fields'] = $columnsCount;
 
+            $entityControllerPath = app_path("Http/Controllers/{$entity}Controller.php");
+            $appStructure[$entity]['actions'] = $this->countMethods($entityControllerPath);
+            $appStructure[$entity]['BE Logics'] = $this->countDevUnit($entityControllerPath, [
+                'if' => '/if\s*\(/',
+                'foreach' => '/foreach\s*\(/',
+                'switch' => '/switch\s*\(/',
+            ]);
 
-    foreach ($entities as $entity => $path) {
+            $appStructure[$entity]['relations'] = $this->countDevUnit($path, [
+                'hasOne', 'hasMany', 'belongsTo', 'belongsToMany',
+                'morphOne', 'morphTo', 'morphMany',
+            ]);
 
-      //conteggio dei campi
-      $modelClassName = "App\\Models\\$entity"; // Nome completo della classe del modello come stringa
-      $modelInstance = app($modelClassName);
-      $columnsCount = count($modelInstance->getFillable());
-      $appStructure[$entity]['fields'] = $columnsCount;
+            $viewsPath = base_path("resources/views/" . Str::plural(strtolower($entity)));
+            $views = $this->getEntityDescription('views', $viewsPath);
+            $appStructure[$entity]['views'] = count($views);
 
-      //but entity are no controller, need to convert
-      $entityControllerPath = app_path("Http/Controllers") . "/" . $entity . "Controller.php";
-      $appStructure[$entity]['actions'] = $this->countDevUnit($entityControllerPath, ['public function']);
+            $feLogicsCount = 0;
+            $formFields = 0;
+            foreach ($views as $viewPath) {
+                $feLogicsCount += $this->countDevUnit($viewPath, [
+                    '/@if\s*\(/', '/@foreach\s*\(/', '/@switch\s*\(/'
+                ]);
 
-      //be logics
-      $appStructure[$entity]['BE Logics'] = $this->countDevUnit($entityControllerPath, [
-        'if' => '/if\s*\((.*?)\)/', // Trova istruzioni @if
-        'foreach' => '/foreach\s*\((.*?)\)/', // Trova istruzioni @foreach
-        'switch' => '/switch\s*\((.*?)\)/', // Trova istruzioni @switch
-      ]);
+                $crawler = new Crawler(file_get_contents($viewPath));
+                $formFields += $crawler->filter('input, select, textarea, button')->count();
+            }
+            $appStructure[$entity]['FE Logics'] = $feLogicsCount;
+            $appStructure[$entity]['Forms'] = $formFields;
+        }
 
-      //the entityes are models, so i can extract relations
-      $appStructure[$entity]['relations'] = $this->countDevUnit($path, [
-        'hasOne',
-        'hasMany',
-        'belongsTo',
-        'belongsToMany',
-        'morphOne',
-        'morphTo',
-        'morphMany',
-        'morphToMany',
-        'morphedByMany',
-      ]);
-
-      //conteggio delle viste
-      $mEntity = in_array($entity, array_keys($viewMappings)) ? $viewMappings[$entity] : $entity;
-      $views = $this->getEntityDescription('views', base_path("resources/views/" . Str::plural(strtolower($mEntity))));
-      $appStructure[$entity]['views'] = count($views);
-
-      //controllo dei campi nelle viste
-      $feLogicsCount = 0;
-      $formFields = 0;
-
-      foreach ($views as $eView => $viewPath) {
-        $feLogicsCount += $this->countDevUnit($viewPath, [
-          'if' => '/@if\s*\((.*?)\)/', // Trova istruzioni @if
-          'foreach' => '/@foreach\s*\((.*?)\)/', // Trova istruzioni @foreach
-          'switch' => '/@switch\s*\((.*?)\)/', // Trova istruzioni @switch
-        ]);
-
-        $formFields += $this->countDevUnit($viewPath, [
-          '<input',
-          '<select',
-          '<form',
-          '<button'
-        ]);
-      }
-
-      $appStructure[$entity]['FE Logics'] = $feLogicsCount;
-      $appStructure[$entity]['Forms'] = $formFields;
+        file_put_contents('app_structure.json', json_encode($appStructure, JSON_PRETTY_PRINT));
+        $this->info('Analisi completata: app_structure.json generato.');
     }
 
+    protected function getEntityDescription($typeKey, $path)
+    {
+        if (!file_exists($path)) {
+            $this->warn("Il file $path non esiste.");
+            return [];
+        }
 
-    file_put_contents('app_structure.json', json_encode($appStructure, JSON_PRETTY_PRINT));
-
-  }
-
-  protected function getEntityDescription($typeKey, $path)
-  {
-    if (!file_exists($path)) {
-      $this->warn("il file $path non esiste");
-      return array($typeKey => []);
+        $files = File::allFiles($path);
+        $descriptions = [];
+        foreach ($files as $file) {
+            $entityName = $file->getFilenameWithoutExtension();
+            $descriptions[$entityName] = $file->getPathname();
+        }
+        return $descriptions;
     }
 
-    $files = File::allFiles($path);
-    $descriptions = [];
+    protected function countMethods($filePath)
+    {
+        if (!file_exists($filePath)) {
+            $this->warn("File $filePath non trovato.");
+            return 0;
+        }
 
-    foreach ($files as $file) {
-      // Estrapola il nome del modello dal nome del file, escludendo l'estensione ".php"
-      $entityName = $file->getFilenameWithoutExtension();
+        $parser = (new ParserFactory())->create(ParserFactory::PREFER_PHP7);
+        $stmts = $parser->parse(file_get_contents($filePath));
 
-      // Usa il nome dell'entità come chiave e il percorso completo del file come valore
-      $descriptions[$entityName] = $file->getPathname();
+        $actions = 0;
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof \PhpParser\Node\Stmt\ClassMethod && $stmt->isPublic()) {
+                $actions++;
+            }
+        }
+        return $actions;
     }
 
-    return $descriptions;
-  }
+    protected function countDevUnit($filePath, $patterns)
+    {
+        if (!file_exists($filePath)) {
+            $this->warn("File $filePath non trovato.");
+            return 0;
+        }
 
+        $content = file_get_contents($filePath);
+        $totalOccurrences = 0;
 
-  /**
-   * Conta le occorrenze totali di una lista di stringhe o pattern regex in un file.
-   *
-   * @param string $filePath Il percorso completo al file da analizzare.
-   * @param array $patterns Un array di stringhe o pattern regex da cercare.
-   * @return int La somma totale delle occorrenze di tutti i pattern.
-   */
-  function countDevUnit($filePath, $patterns)
-  {
-    // Assicurati che il file esista prima di procedere.
-    if (!file_exists($filePath)) {
-      $this->error("Il file {$filePath} non esiste.");
-      return 0;
+        foreach ($patterns as $pattern) {
+            if (@preg_match($pattern, '') !== false) {
+                preg_match_all($pattern, $content, $matches);
+                $totalOccurrences += count($matches[0]);
+            } else {
+                $totalOccurrences += substr_count($content, $pattern);
+            }
+        }
+        return $totalOccurrences;
     }
-
-    // Leggi il contenuto del file.
-    $content = file_get_contents($filePath);
-    $totalOccurrences = 0;
-
-    foreach ($patterns as $pattern) {
-      if (@preg_match($pattern, '') !== false) {
-        // Il pattern è una regex valida, usa preg_match_all
-        preg_match_all($pattern, $content, $matches);
-        $totalOccurrences += count($matches[0]);
-      } else {
-        // Pattern considerato come stringa semplice
-        $totalOccurrences += substr_count($content, $pattern);
-      }
-    }
-
-    return $totalOccurrences;
-  }
-
-
 }
